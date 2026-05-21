@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Meteo</title>
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#0f0f1a">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #0f0f1a;
+      color: #eee;
+      min-height: 100vh;
+      padding: 20px;
+    }
+    h1 {
+      text-align: center;
+      font-size: 1.1rem;
+      margin-bottom: 20px;
+      color: #666;
+      font-weight: 400;
+      letter-spacing: 0.08em;
+    }
+    .card {
+      background: #2a2d4a;
+      border: 1px solid #3d4170;
+      border-radius: 14px;
+      padding: 16px 18px;
+      margin-bottom: 14px;
+    }
+    .city { font-size: 1rem; font-weight: 700; margin-bottom: 4px; color: #fff; }
+    .temp { font-size: 2.4rem; font-weight: 300; line-height: 1.1; color: #fff; }
+    .desc { color: #bbb; font-size: 0.88rem; margin-top: 4px; text-transform: capitalize; }
+    .details { margin-top: 8px; font-size: 0.82rem; color: #8890cc; line-height: 1.7; }
+
+    .domani {
+      margin-top: 12px;
+      padding-top: 12px;
+      border-top: 1px solid #3d4170;
+    }
+    .domani-titolo {
+      font-size: 0.75rem;
+      color: #666;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 4px;
+    }
+    .domani-temp { font-size: 1.3rem; font-weight: 300; color: #ccc; }
+    .domani-desc { font-size: 0.82rem; color: #8890cc; text-transform: capitalize; margin-top: 2px; }
+
+    .error { color: #e07070; font-size: 0.85rem; margin-top: 4px; }
+    #refresh {
+      display: block;
+      margin: 20px auto 0;
+      background: none;
+      border: 1px solid #3d4170;
+      color: #8890cc;
+      padding: 8px 24px;
+      border-radius: 20px;
+      font-size: 0.88rem;
+      cursor: pointer;
+    }
+    #refresh:active { background: #2a2d4a; }
+    #aggiornato {
+      text-align: center;
+      color: #444;
+      font-size: 0.78rem;
+      margin-top: 10px;
+    }
+  </style>
+</head>
+<body>
+  <h1>METEO</h1>
+  <div id="cards"></div>
+  <button id="refresh" onclick="caricaMeteo()">↻ Aggiorna</button>
+  <div id="aggiornato"></div>
+
+  <script>
+    const API_KEY = 'b09c470f58fc66ce9ed8fd403f2b163f';
+
+    const luoghi = [
+      { nome: 'Como',             query: 'Como,IT' },
+      { nome: 'Tortona',          query: 'Tortona,IT' },
+      { nome: 'Savona',           query: 'Savona,IT' },
+      { nome: 'Molino dei Torti', lat: 44.9167, lon: 8.8833 },
+    ];
+
+    function buildCurrentUrl(luogo) {
+      if (luogo.lat !== undefined)
+        return `https://api.openweathermap.org/data/2.5/weather?lat=${luogo.lat}&lon=${luogo.lon}&appid=${API_KEY}&units=metric&lang=it`;
+      return `https://api.openweathermap.org/data/2.5/weather?q=${luogo.query}&appid=${API_KEY}&units=metric&lang=it`;
+    }
+
+    function buildForecastUrl(luogo) {
+      if (luogo.lat !== undefined)
+        return `https://api.openweathermap.org/data/2.5/forecast?lat=${luogo.lat}&lon=${luogo.lon}&appid=${API_KEY}&units=metric&lang=it`;
+      return `https://api.openweathermap.org/data/2.5/forecast?q=${luogo.query}&appid=${API_KEY}&units=metric&lang=it`;
+    }
+
+    function icona(id) {
+      if (id >= 200 && id < 300) return '⛈';
+      if (id >= 300 && id < 400) return '🌦';
+      if (id >= 500 && id < 600) return '🌧';
+      if (id >= 600 && id < 700) return '❄️';
+      if (id >= 700 && id < 800) return '🌫';
+      if (id === 800)             return '☀️';
+      if (id > 800)               return '☁️';
+      return '🌡';
+    }
+
+    function domaniPrevisione(lista) {
+      const domani = new Date();
+      domani.setDate(domani.getDate() + 1);
+      const dataStr = domani.toISOString().slice(0, 10);
+
+      const slot = lista.filter(s => s.dt_txt.startsWith(dataStr));
+      if (!slot.length) return null;
+
+      const min = Math.round(Math.min(...slot.map(s => s.main.temp_min)));
+      const max = Math.round(Math.max(...slot.map(s => s.main.temp_max)));
+
+      // condizione prevalente: quella con id più frequente
+      const conteggio = {};
+      slot.forEach(s => {
+        const id = s.weather[0].id;
+        conteggio[id] = (conteggio[id] || { count: 0, desc: s.weather[0].description });
+        conteggio[id].count++;
+      });
+      const idPrev = Object.entries(conteggio).sort((a, b) => b[1].count - a[1].count)[0];
+
+      return { min, max, id: parseInt(idPrev[0]), desc: idPrev[1].desc };
+    }
+
+    async function caricaMeteo() {
+      const container = document.getElementById('cards');
+      container.innerHTML = luoghi.map(l =>
+        `<div class="card"><div class="city">${l.nome}</div><div class="desc">Caricamento…</div></div>`
+      ).join('');
+
+      for (let i = 0; i < luoghi.length; i++) {
+        try {
+          const [curr, fore] = await Promise.all([
+            fetch(buildCurrentUrl(luoghi[i])).then(r => { if (!r.ok) throw new Error(); return r.json(); }),
+            fetch(buildForecastUrl(luoghi[i])).then(r => { if (!r.ok) throw new Error(); return r.json(); }),
+          ]);
+
+          const id = curr.weather[0].id;
+          const dom = domaniPrevisione(fore.list);
+          const domaniHtml = dom ? `
+            <div class="domani">
+              <div class="domani-titolo">Domani</div>
+              <div class="domani-temp">${icona(dom.id)} ${dom.min}° – ${dom.max}°</div>
+              <div class="domani-desc">${dom.desc}</div>
+            </div>` : '';
+
+          container.children[i].innerHTML = `
+            <div class="city">${luoghi[i].nome} ${icona(id)}</div>
+            <div class="temp">${Math.round(curr.main.temp)}°C</div>
+            <div class="desc">${curr.weather[0].description}</div>
+            <div class="details">
+              Min ${Math.round(curr.main.temp_min)}° · Max ${Math.round(curr.main.temp_max)}°<br>
+              Umidità ${curr.main.humidity}% · Vento ${Math.round(curr.wind.speed * 3.6)} km/h
+            </div>
+            ${domaniHtml}
+          `;
+        } catch (e) {
+          container.children[i].innerHTML = `
+            <div class="city">${luoghi[i].nome}</div>
+            <div class="error">Dati non disponibili</div>
+          `;
+        }
+      }
+
+      const ora = new Date().toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
+      document.getElementById('aggiornato').textContent = `Aggiornato alle ${ora}`;
+    }
+
+    caricaMeteo();
+  </script>
+</body>
+</html>
