@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Meteo</title>
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#0f0f1a">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #0f0f1a;
+      color: #eee;
+      min-height: 100vh;
+      padding: 20px;
+    }
+    h1 {
+      text-align: center;
+      font-size: 1.1rem;
+      margin-bottom: 20px;
+      color: #666;
+      font-weight: 400;
+      letter-spacing: 0.08em;
+    }
+    .card {
+      background: #383b5e;
+      border: 1px solid #4e5280;
+      border-radius: 14px;
+      padding: 16px 18px;
+      margin-bottom: 14px;
+    }
+    .city { font-size: 1rem; font-weight: 700; margin-bottom: 4px; color: #fff; }
+    .temp { font-size: 2.4rem; font-weight: 300; line-height: 1.1; color: #fff; }
+    .desc { color: #ccc; font-size: 0.88rem; margin-top: 4px; text-transform: capitalize; }
+    .details { margin-top: 8px; font-size: 0.82rem; color: #a0a8d8; line-height: 1.7; }
+
+    .previsioni {
+      margin-top: 12px;
+      padding-top: 12px;
+      border-top: 1px solid #4e5280;
+    }
+    .previsioni-titolo {
+      font-size: 0.72rem;
+      color: #888;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 8px;
+    }
+    .giorno-riga {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 4px 0;
+      border-bottom: 1px solid #4a4e72;
+      font-size: 0.85rem;
+    }
+    .giorno-riga:last-child { border-bottom: none; }
+    .giorno-nome { color: #bbb; width: 80px; }
+    .giorno-icona { font-size: 1rem; width: 24px; text-align: center; }
+    .giorno-temp { color: #fff; font-weight: 500; width: 70px; text-align: right; }
+    .giorno-desc { color: #a0a8d8; font-size: 0.78rem; flex: 1; text-align: right; text-transform: capitalize; }
+
+    .error { color: #e07070; font-size: 0.85rem; margin-top: 4px; }
+    #refresh {
+      display: block;
+      margin: 20px auto 0;
+      background: none;
+      border: 1px solid #4e5280;
+      color: #a0a8d8;
+      padding: 8px 24px;
+      border-radius: 20px;
+      font-size: 0.88rem;
+      cursor: pointer;
+    }
+    #refresh:active { background: #383b5e; }
+    #aggiornato {
+      text-align: center;
+      color: #555;
+      font-size: 0.78rem;
+      margin-top: 10px;
+    }
+  </style>
+</head>
+<body>
+  <h1>METEO</h1>
+  <div id="cards"></div>
+  <button id="refresh" onclick="caricaMeteo()">↻ Aggiorna</button>
+  <div id="aggiornato"></div>
+
+  <script>
+    const API_KEY = 'b09c470f58fc66ce9ed8fd403f2b163f';
+
+    const luoghi = [
+      { nome: 'Como',             query: 'Como,IT' },
+      { nome: 'Tortona',          query: 'Tortona,IT' },
+      { nome: 'Savona',           query: 'Savona,IT' },
+      { nome: 'Molino dei Torti', lat: 44.9167, lon: 8.8833 },
+    ];
+
+    const GIORNI = ['Dom', 'Lun', 'Mar', 'Mer', 'Gio', 'Ven', 'Sab'];
+
+    function buildCurrentUrl(l) {
+      return l.lat !== undefined
+        ? `https://api.openweathermap.org/data/2.5/weather?lat=${l.lat}&lon=${l.lon}&appid=${API_KEY}&units=metric&lang=it`
+        : `https://api.openweathermap.org/data/2.5/weather?q=${l.query}&appid=${API_KEY}&units=metric&lang=it`;
+    }
+
+    function buildForecastUrl(l) {
+      return l.lat !== undefined
+        ? `https://api.openweathermap.org/data/2.5/forecast?lat=${l.lat}&lon=${l.lon}&appid=${API_KEY}&units=metric&lang=it`
+        : `https://api.openweathermap.org/data/2.5/forecast?q=${l.query}&appid=${API_KEY}&units=metric&lang=it`;
+    }
+
+    function icona(id) {
+      if (id >= 200 && id < 300) return '⛈';
+      if (id >= 300 && id < 400) return '🌦';
+      if (id >= 500 && id < 600) return '🌧';
+      if (id >= 600 && id < 700) return '❄️';
+      if (id >= 700 && id < 800) return '🌫';
+      if (id === 800)             return '☀️';
+      if (id > 800)               return '☁️';
+      return '🌡';
+    }
+
+    function elaboraPrevisioni(lista) {
+      const oggi = new Date().toISOString().slice(0, 10);
+      const perGiorno = {};
+
+      lista.forEach(s => {
+        const data = s.dt_txt.slice(0, 10);
+        if (data === oggi) return; // oggi lo mostriamo già con dati live
+        if (!perGiorno[data]) perGiorno[data] = [];
+        perGiorno[data].push(s);
+      });
+
+      return Object.entries(perGiorno).slice(0, 5).map(([data, slot]) => {
+        const min = Math.round(Math.min(...slot.map(s => s.main.temp_min)));
+        const max = Math.round(Math.max(...slot.map(s => s.main.temp_max)));
+        const conteggio = {};
+        slot.forEach(s => {
+          const id = s.weather[0].id;
+          if (!conteggio[id]) conteggio[id] = { count: 0, desc: s.weather[0].description };
+          conteggio[id].count++;
+        });
+        const [idPrev, val] = Object.entries(conteggio).sort((a, b) => b[1].count - a[1].count)[0];
+        const nomeGiorno = GIORNI[new Date(data + 'T12:00:00').getDay()];
+        return { giorno: nomeGiorno, min, max, id: parseInt(idPrev), desc: val.desc };
+      });
+    }
+
+    async function caricaMeteo() {
+      const container = document.getElementById('cards');
+      container.innerHTML = luoghi.map(l =>
+        `<div class="card"><div class="city">${l.nome}</div><div class="desc">Caricamento…</div></div>`
+      ).join('');
+
+      for (let i = 0; i < luoghi.length; i++) {
+        try {
+          const [curr, fore] = await Promise.all([
+            fetch(buildCurrentUrl(luoghi[i])).then(r => { if (!r.ok) throw new Error(); return r.json(); }),
+            fetch(buildForecastUrl(luoghi[i])).then(r => { if (!r.ok) throw new Error(); return r.json(); }),
+          ]);
+
+          const id = curr.weather[0].id;
+          const previsioni = elaboraPrevisioni(fore.list);
+
+          const prevHtml = previsioni.length ? `
+            <div class="previsioni">
+              <div class="previsioni-titolo">Prossimi giorni</div>
+              ${previsioni.map(g => `
+                <div class="giorno-riga">
+                  <span class="giorno-nome">${g.giorno}</span>
+                  <span class="giorno-icona">${icona(g.id)}</span>
+                  <span class="giorno-temp">${g.min}° – ${g.max}°</span>
+                  <span class="giorno-desc">${g.desc}</span>
+                </div>`).join('')}
+            </div>` : '';
+
+          container.children[i].innerHTML = `
+            <div class="city">${luoghi[i].nome} ${icona(id)}</div>
+            <div class="temp">${Math.round(curr.main.temp)}°C</div>
+            <div class="desc">${curr.weather[0].description}</div>
+            <div class="details">
+              Min ${Math.round(curr.main.temp_min)}° · Max ${Math.round(curr.main.temp_max)}°<br>
+              Umidità ${curr.main.humidity}% · Vento ${Math.round(curr.wind.speed * 3.6)} km/h
+            </div>
+            ${prevHtml}
+          `;
+        } catch (e) {
+          container.children[i].innerHTML = `
+            <div class="city">${luoghi[i].nome}</div>
+            <div class="error">Dati non disponibili</div>
+          `;
+        }
+      }
+
+      const ora = new Date().toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
+      document.getElementById('aggiornato').textContent = `Aggiornato alle ${ora}`;
+    }
+
+    caricaMeteo();
+  </script>
+</body>
+</html>
